@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <title>전국 전기차 충전소 위치 & 이용량 현황</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+  <style>
+    html, body { margin:0; padding:0; height:100%; }
+    #map { width:100%; height:100%; }
+    .controls { position:absolute; top:10px; left:10px; z-index:1000; background:rgba(255,255,255,0.9); padding:8px; border-radius:4px; }
+    .controls button { margin:0 4px; padding:6px; cursor:pointer; }
+    .legend { background:white; padding:8px; border-radius:4px; font-size:13px; line-height:1.4; }
+    .legend-title { font-weight:bold; margin-bottom:4px; }
+    .legend-item { display:flex; align-items:center; margin-bottom:2px; }
+    .legend-color { width:16px; height:16px; margin-right:6px; }
+  </style>
+</head>
+<body>
+
+  <div id="map"></div>
+  <div class="controls">
+    <button onclick="showMode('choropleth')">이용량 현황</button>
+    <button onclick="showMode('markers')">충전소 위치</button>
+  </div>
+
+  <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+  <script type="module">
+    // module 파일 로드
+    import { loadChargerCoords } from './charge.js';
+    import { evCounts, getEVColor } from './use.js';
+
+    // 지도 초기화
+    const map = L.map('map').setView([36.5, 127.8], 7);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '© OpenStreetMap contributors'
+    }).addTo(map);
+
+    let geoLayer = null, markerLayer = null, legend = null;
+
+    // 레이어 초기화
+    function clearLayers() {
+      if (geoLayer)    { map.removeLayer(geoLayer);    geoLayer = null; }
+      if (markerLayer) { map.removeLayer(markerLayer); markerLayer = null; }
+      if (legend)      { map.removeControl(legend);    legend = null; }
+    }
+
+    // 범례 생성
+    function addLegend(title, grades, colorFn) {
+      legend = L.control({ position: 'bottomright' });
+      legend.onAdd = () => {
+        const div = L.DomUtil.create('div', 'legend');
+        div.innerHTML = `<div class="legend-title">${title}</div>`;
+        grades.forEach((g, i) => {
+          const c = colorFn(g + 1);
+          const label = i < grades.length - 1
+            ? `${grades[i].toLocaleString()} ~ ${grades[i+1] - 1}`
+            : `${grades[i].toLocaleString()} 이상`;
+          div.innerHTML += `
+            <div class="legend-item">
+              <span class="legend-color" style="background:${c}"></span>${label}
+            </div>`;
+        });
+        return div;
+      };
+      legend.addTo(map);
+    }
+
+    // 이용량 현황 표시
+    function showChoropleth() {
+      clearLayers();
+      fetch('./korea_sido.geojson')
+        .then(res => res.json())
+        .then(geojson => {
+          geoLayer = L.geoJSON(geojson, {
+            style: f => {
+              const v = evCounts[f.properties.NAME_1] || 0;
+              return { fillColor: getEVColor(v), weight:1, color:'#fff', fillOpacity:0.7 };
+            },
+            onEachFeature: (f, layer) => {
+              const v = evCounts[f.properties.NAME_1] || 0;
+              layer.bindPopup(
+                `<strong>${f.properties.NAME_1}</strong><br>전기차 등록대수: ${v.toLocaleString()}대`
+              );
+            }
+          }).addTo(map);
+          addLegend('🚗 전기차 등록대수', [0,20000,30000,50000,100000], getEVColor);
+        })
+        .catch(err => alert('GeoJSON 로드 실패: ' + err.message));
+    }
+
+    // 충전소 위치 표시
+    function showMarkers() {
+      clearLayers();
+      markerLayer = L.layerGroup().addTo(map);
+      loadChargerCoords()
+        .then(coords => {
+          coords.forEach(o => {
+            L.marker([o.위도, o.경도])
+             .bindPopup(`<strong>${o.충전소명}</strong>`)
+             .addTo(markerLayer);
+          });
+        })
+        .catch(err => alert('충전소 좌표 로드 실패: ' + err.message));
+    }
+
+    // 모드 전환
+    window.showMode = mode => {
+      if (mode === 'choropleth') showChoropleth();
+      else                        showMarkers();
+    };
+
+    // 초기 로드
+    showChoropleth();
+  </script>
+
+</body>
+</html>
